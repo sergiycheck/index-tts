@@ -4,6 +4,7 @@ from botocore.exceptions import ClientError
 from dotenv import load_dotenv
 load_dotenv()
 
+
 # loading env variables from .env file
 # AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
 # AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
