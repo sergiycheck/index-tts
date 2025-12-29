@@ -11,7 +11,7 @@ from boto3_utils import download_s3_file, upload_s3_file
 
 class AudioRequest(BaseModel):
     text_prompt: str
-    audio_ref_s3_link: str
+    audio_ref_s3_key: str
 
 app = FastAPI()
 
@@ -23,8 +23,6 @@ def read_root(request: AudioRequest):
     if not bucket_name:
         raise RuntimeError("S3_BUCKET_NAME environment variable is not set")
     
-    bucket_folder = "generated_audios"
-  
     tts = IndexTTS2(
         cfg_path=os.path.join("checkpoints", "config.yaml"),
         model_dir=os.path.join("checkpoints"),
@@ -33,12 +31,14 @@ def read_root(request: AudioRequest):
         use_deepspeed=False,
     )
 
-    output_path = os.path.join("output", f"{uuid.uuid4()}.wav")
+    output_path = os.path.join("output")
+    if (not os.path.exists("output")):
+        os.makedirs("output")
     
     audio_ref_path = download_s3_file(
         bucket=bucket_name,
-        key=request.audio_ref_s3_link.replace(f"s3://{bucket_name}/", ""),
-        local_path=os.path.join("temp", f"{uuid.uuid4()}_ref.wav")
+        key=request.audio_ref_s3_key,
+        local_path=output_path
     )
 
     tts.infer(
@@ -56,15 +56,14 @@ def read_root(request: AudioRequest):
     audio_file_name = os.path.basename(output_path)
     
     upload_s3_file(
-        bucket=bucket_name,
-        key=f"{bucket_folder}/{audio_file_name}",
         local_path=output_path,
+        bucket=bucket_name,
     )
     
     # Clean up local files
     os.remove(audio_ref_path)
     os.remove(output_path)
     
-    full_generated_audio_url = f"https://{bucket_name}.s3.amazonaws.com/{bucket_folder}/{audio_file_name}"
+    full_generated_audio_url = f"https://{bucket_name}.s3.amazonaws.com/{audio_file_name}"
     
     return {"generated_audio_s3_link": f"{full_generated_audio_url}"}

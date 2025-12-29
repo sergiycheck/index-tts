@@ -18,6 +18,8 @@ def download_s3_file(bucket: str, key: str, local_path: str) -> str:
     """
     os.makedirs(os.path.dirname(local_path), exist_ok=True)
 
+    file_name = key.split("/")[-1]
+    local_path = os.path.join(local_path, file_name)
     try:
         s3.download_file(bucket, key, local_path)
     except ClientError as e:
@@ -26,18 +28,17 @@ def download_s3_file(bucket: str, key: str, local_path: str) -> str:
     return local_path
 
 
-def upload_s3_file(bucket: str, key: str, local_path: str, content_type: str | None = None):
+def upload_s3_file(local_path: str, bucket, object_name= None):
     """
     Upload a local file to S3.
     """
     if not os.path.exists(local_path):
         raise FileNotFoundError(local_path)
-
-    extra_args = {}
-    if content_type:
-        extra_args["ContentType"] = content_type
+    
+    if object_name is None:
+        object_name = os.path.basename(local_path)
 
     try:
-        s3.upload_file(local_path, bucket, key, ExtraArgs=extra_args)
+        s3.upload_file(local_path, bucket, object_name)
     except ClientError as e:
-        raise RuntimeError(f"Failed to upload {local_path} to s3://{bucket}/{key}: {e}")
+        raise RuntimeError(f"Failed to upload {local_path} to s3://{bucket}/{object_name}: {e}")
