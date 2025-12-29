@@ -6,6 +6,7 @@ import uuid
 import json
 import multiprocessing as mp
 from multiprocessing import Semaphore
+import asyncio
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
@@ -34,18 +35,14 @@ def now_local_str() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-def tts_worker(job_id: str, request: dict):
+def tts_worker(job_id: str, request: dict, queue: mp.Queue):
     bucket_name = os.getenv("S3_BUCKET_NAME")
     output_dir = os.path.join(BASE_DIR, "output")
     os.makedirs(output_dir, exist_ok=True)
 
     try:
-        def send(msg):
-            ws = active_connections.get(job_id)
-            if ws:
-                ws.send_text(json.dumps(msg))
 
-        send({"status": "downloading_reference"})
+        queue.put({"status": "downloading_reference"})
         print("Downloading reference audio from S3...", now_local_str())
 
         audio_ref_path = download_s3_file(
@@ -54,9 +51,9 @@ def tts_worker(job_id: str, request: dict):
             local_path=output_dir
         )
         
+        queue.put({"status": "loading_model"})
         print("Loading IndexTTS2 model...", now_local_str())
 
-        # for some reason 
         tts = IndexTTS2(
             cfg_path=os.path.join(BASE_DIR, "checkpoints", "config.yaml"),
             model_dir=os.path.join(BASE_DIR, "checkpoints"),
@@ -65,7 +62,7 @@ def tts_worker(job_id: str, request: dict):
             use_deepspeed=False,
         )
 
-        send({"status": "generating_audio"})
+        queue.put({"status": "generating_audio"})
         print("Generating audio...", now_local_str())
 
         output_path = os.path.join(output_dir, f"{uuid.uuid4()}.wav")
@@ -82,7 +79,7 @@ def tts_worker(job_id: str, request: dict):
 
         generated_file = os.path.basename(output_path)
 
-        send({"status": "uploading_to_s3"})
+        queue.put({"status": "uploading_to_s3"})
         print("Uploading generated audio to S3...", now_local_str())
 
         upload_s3_file(
@@ -92,7 +89,7 @@ def tts_worker(job_id: str, request: dict):
 
         s3_url = f"https://{bucket_name}.s3.amazonaws.com/{generated_file}"
 
-        send({
+        queue.put({
             "status": "completed",
             "s3_url": s3_url
         })
@@ -100,7 +97,7 @@ def tts_worker(job_id: str, request: dict):
         print("Job completed.", now_local_str())
 
     except Exception as e:
-        send({
+        queue.put({
             "status": "error",
             "error": str(e)
         })
@@ -115,19 +112,32 @@ def tts_worker(job_id: str, request: dict):
             pass
 
 
+async def ws_event_forwarder(job_id: str, queue: mp.Queue):
+    websocket = active_connections.get(job_id)
+    if not websocket:
+        return
+
+    while True:
+        msg = await asyncio.to_thread(queue.get)
+        await websocket.send_text(json.dumps(msg))
+        if msg["status"] in ("completed", "error"):
+            break
+
 @app.post("/generate-audio")
-def generate_audio(request: AudioRequest):
+async def generate_audio(request: AudioRequest):
     acquired = job_semaphore.acquire(block=False)
     if not acquired:
         raise HTTPException(429, "Server busy")
     
     job_id = str(uuid.uuid4())
+    queue = mp.Queue()
 
     process = mp.Process(
         target=tts_worker,
-        args=(job_id, request.dict())
+        args=(job_id, request.dict(), queue)
     )
     process.start()
+    asyncio.create_task(ws_event_forwarder(job_id, queue))
 
     return {
         "job_id": job_id,
