@@ -5,6 +5,8 @@ from utils import now_local_str
 from indextts.infer_v2 import IndexTTS2
 import uuid
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 def tts_worker(audio_ref_s3_key: str, text_prompt: str):
 
   try:
@@ -13,7 +15,7 @@ def tts_worker(audio_ref_s3_key: str, text_prompt: str):
     if not bucket_name:
         raise RuntimeError("S3_BUCKET_NAME environment variable is not set")
     
-    output_dir = os.path.join("output")
+    output_dir = os.path.join(BASE_DIR, "output")
     os.makedirs(output_dir, exist_ok=True)
 
     print("Downloading reference audio from S3...", now_local_str())
