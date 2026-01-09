@@ -23,19 +23,27 @@ queues: Dict[str, mp.Queue] = {}
 class AudioRequest(BaseModel):
     text_prompt: str
     audio_ref_s3_key: str
+    chat_id: str
 
 
 def tts_worker_wrapper(request: dict, queue: mp.Queue, job_semaphore: mp.Semaphore):
   try:      
-    queue.put({"status": "starting generation"})
+    queue.put({"status": "started"})
     print("Starting generation", now_local_str())
+    
+    chat_id = request["chat_id"]
   
     result = tts_worker(
         audio_ref_s3_key=request["audio_ref_s3_key"],
         text_prompt=request["text_prompt"]
     )
     
-    queue.put(result)
+    result_full = {
+        **result,
+        "chat_id": chat_id
+    }
+    
+    queue.put(result_full)
     
   except Exception as e:
     queue.put({
